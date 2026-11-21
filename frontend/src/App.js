@@ -1,0 +1,70 @@
+import React from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import Navbar from "./components/Navbar";
+import Signup from "./pages/Signup";
+import Signin from "./pages/Signin";
+import Dashboard from "./pages/Dashboard";
+import AskQuestion from "./pages/AskQuestion";
+import QuestionDetail from "./pages/QuestionDetail";
+import Footer from "./components/Footer";
+
+// Protected Route Component
+const ProtectedRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/signin" />;
+  }
+
+  return children;
+};
+
+function App() {
+  return (
+    <Router>
+      <AuthProvider>
+        <div className="min-h-screen flex flex-col">
+          <Navbar />
+          <main className="flex-grow">
+            <Routes>
+              <Route path="/dashbord" element={<Dashboard />} />
+              <Route path="/signup" element={<Signup />} />
+              <Route path="/signin" element={<Signin />} />
+              <Route path="/" element={<Signin />} />
+              <Route path="/question/:id" element={<QuestionDetail />} />
+              <Route
+                path="/ask"
+                element={
+                  <ProtectedRoute>
+                    <AskQuestion />
+                  </ProtectedRoute>
+                }
+              />
+            <Route path="*" element={<Navigate to="/" />} />
+            </Routes>
+          </main>
+          <Footer />
+        </div>
+      </AuthProvider>
+    </Router>
+  );
+}
+
+export default App;

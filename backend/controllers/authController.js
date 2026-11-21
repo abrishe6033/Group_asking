@@ -1,0 +1,242 @@
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { validationResult } = require("express-validator");
+const { pool } = require("../config/db");
+const { OAuth2Client } = require("google-auth-library");
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Generate JWT Token
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
+    expiresIn: "30d",
+  });
+};
+
+// @desc    Register user
+// @route   POST /api/auth/signup
+const signup = async (req, res) => {
+  try {
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array(),
+      });
+    }
+
+    const { username, firstName, lastName, email, password, agreedToTerms } =
+      req.body;
+
+    // Check if user agreed to terms
+    if (!agreedToTerms) {
+      return res.status(400).json({
+        success: false,
+        message: "You must agree to the privacy policy and terms of service",
+      });
+    }
+
+    // Check if user already exists
+    const [existingUsers] = await pool.query(
+      "SELECT id FROM users WHERE email = ? OR username = ?",
+      [email, username],
+    );
+
+    if (existingUsers.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "User with this email or username already exists",
+      });
+    }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Insert new user
+    const [result] = await pool.query(
+      `INSERT INTO users (username, first_name, last_name, email, password, agreed_to_terms) 
+             VALUES (?, ?, ?, ?, ?, ?)`,
+      [username, firstName, lastName, email, hashedPassword, agreedToTerms],
+    );
+
+    // Get the created user
+    const [newUser] = await pool.query(
+      "SELECT id, username, first_name, last_name, email, created_at FROM users WHERE id = ?",
+      [result.insertId],
+    );
+
+    // Generate token
+    const token = generateToken(newUser[0].id);
+
+    res.status(201).json({
+      success: true,
+      message: "User created successfully",
+      user: {
+        id: newUser[0].id,
+        username: newUser[0].username,
+        firstName: newUser[0].first_name,
+        lastName: newUser[0].last_name,
+        email: newUser[0].email,
+        createdAt: newUser[0].created_at,
+      },
+      token,
+    });
+  } catch (error) {
+    console.error("Signup error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during signup",
+    });
+  }
+};
+
+// @desc    Login user
+// @route   POST /api/auth/signin
+const signin = async (req, res) => {
+  try {
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        errors: errors.array(),
+      });
+    }
+
+    const { email, password } = req.body;
+
+    // Get user from database
+    const [users] = await pool.query(
+      "SELECT id, username, first_name, last_name, email, password FROM users WHERE email = ?",
+      [email],
+    );
+
+    if (users.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password",
+      });
+    }
+
+    const user = users[0];
+
+    // Check password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password",
+      });
+    }
+
+    // Generate token
+    const token = generateToken(user.id);
+
+    // Remove password from response
+    delete user.password;
+
+    res.json({
+      success: true,
+      message: "Login successful",
+      user: {
+        id: user.id,
+        username: user.username,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        email: user.email,
+      },
+      token,
+    });
+  } catch (error) {
+    console.error("Signin error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during signin",
+    });
+  }
+};
+
+// @desc    Get current user
+// @route   GET /api/auth/me
+const getMe = async (req, res) => {
+  try {
+    const [users] = await pool.query(
+      "SELECT id, username, first_name, last_name, email, created_at FROM users WHERE id = ?",
+      [req.user.id],
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const user = users[0];
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        email: user.email,
+        createdAt: user.created_at,
+      },
+    });
+  } catch (error) {
+    console.error("Get me error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+
+// @desc    Google Login
+// @route   POST /api/auth/google
+const googleLogin = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ success: false, message: "No token provided" });
+
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    
+    const payload = ticket.getPayload();
+    const { email, given_name, family_name } = payload;
+    const username = email.split("@")[0];
+
+    // Check if user exists
+    const [users] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
+    let user;
+
+    if (users.length === 0) {
+      // Create new user if they don't exist
+      const [result] = await pool.query(
+        "INSERT INTO users (username, first_name, last_name, email, password, agreed_to_terms) VALUES (?, ?, ?, ?, ?, ?)",
+        [username, given_name || "Google", family_name || "User", email, "google-oauth-no-password", 1]
+      );
+      user = { id: result.insertId, username, firstName: given_name, lastName: family_name, email };
+    } else {
+      user = users[0];
+    }
+
+    const jwtToken = generateToken(user.id);
+    res.json({ success: true, message: "Google Login successful", user, token: jwtToken });
+  } catch (error) {
+    console.error("Google login error:", error);
+    res.status(401).json({ success: false, message: "Invalid Google token" });
+  }
+};
+
+module.exports = {
+  signup,
+  signin,
+  getMe,
+  googleLogin,
+};

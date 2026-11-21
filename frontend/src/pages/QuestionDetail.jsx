@@ -1,0 +1,298 @@
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { questionAPI, answerAPI } from '../services/api';
+import AnswerCard from '../components/AnswerCard';
+import { formatDistanceToNow } from 'date-fns';
+
+const QuestionDetail = () => {
+    const [question, setQuestion] = useState(null);
+    const [answers, setAnswers] = useState([]);
+    const [newAnswer, setNewAnswer] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [answerError, setAnswerError] = useState('');
+    const [answerLoading, setAnswerLoading] = useState(false);
+    const { id } = useParams();
+    const { user } = useAuth();
+    const navigate = useNavigate();
+
+    useEffect(() => {
+        const fetchQuestionDetails = async () => {
+            try {
+                setLoading(true);
+                const response = await questionAPI.getQuestion(id);
+                setQuestion(response.data.question);
+                setAnswers(response.data.answers);
+                setError('');
+            } catch (error) {
+                setError('Failed to load question');
+                console.error('Error fetching question:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+        
+        fetchQuestionDetails();
+    }, [id]);
+
+    const handleSubmitAnswer = async (e) => {
+        e.preventDefault();
+        if (!user) {
+            setAnswerError('Please sign in to post an answer.');
+            return;
+            return;
+        }
+
+        if (!newAnswer.trim()) {
+            setAnswerError('Answer cannot be empty');
+            return;
+        }
+
+        if (newAnswer.length < 10) {
+            setAnswerError('Answer must be at least 10 characters');
+            return;
+        }
+
+        setAnswerError('');
+        setAnswerLoading(true);
+
+        try {
+            const response = await answerAPI.createAnswer({
+                questionId: parseInt(id),
+                content: newAnswer
+            });
+
+            setAnswers([response.data.answer, ...answers]);
+            setNewAnswer('');
+        } catch (error) {
+            setAnswerError(error.response?.data?.message || 'Failed to post answer');
+        } finally {
+            setAnswerLoading(false);
+        }
+    };
+
+    const handleAcceptAnswer = async (answerId) => {
+        try {
+            await answerAPI.acceptAnswer(answerId);
+            // Refresh question details
+            const response = await questionAPI.getQuestion(id);
+            setQuestion(response.data.question);
+            setAnswers(response.data.answers);
+        } catch (error) {
+            alert('Failed to accept answer');
+        }
+    };
+
+    const handleDeleteAnswer = async (answerId) => {
+        if (!window.confirm('Are you sure you want to delete this answer?')) {
+            return;
+        }
+
+        try {
+            await answerAPI.deleteAnswer(answerId);
+            setAnswers(answers.filter(a => a.id !== answerId));
+        } catch (error) {
+            alert('Failed to delete answer');
+        }
+    };
+
+    const handleDeleteQuestion = async () => {
+        if (!window.confirm('Are you sure you want to delete this question?')) {
+            return;
+        }
+
+        try {
+            await questionAPI.deleteQuestion(id);
+            navigate('/');
+        } catch (error) {
+            alert('Failed to delete question');
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center h-64">
+                <div className="text-center">
+                    <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-gray-600">Loading question...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (error || !question) {
+        return (
+            <div className="max-w-4xl mx-auto px-4 py-8">
+                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+                    {error || 'Question not found'}
+                </div>
+            </div>
+        );
+    }
+
+    const timeAgo = formatDistanceToNow(new Date(question.created_at), { addSuffix: true });
+
+    return (
+        <div className="min-h-screen bg-gray-100 py-8">
+            <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+                {/* Question */}
+                <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+                    <div className="flex justify-between items-start mb-4">
+                        <h1 className="text-3xl font-bold text-gray-900">{question.title}</h1>
+                        {user && user.id === question.user_id && (
+                            <button
+                                onClick={handleDeleteQuestion}
+                                className="text-red-600 hover:text-red-800"
+                            >
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </button>
+                        )}
+                    </div>
+                    
+                    <div className="flex items-center text-sm text-gray-500 mb-4">
+                        <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center mr-2">
+                            <span className="text-white text-sm font-bold">
+                                {question.username?.charAt(0).toUpperCase()}
+                            </span>
+                        </div>
+                        <span className="font-medium text-gray-700">{question.username}</span>
+                        <span className="mx-2">•</span>
+                        <span>asked {timeAgo}</span>
+                        <span className="mx-2">•</span>
+                        <span>{question.views} views</span>
+                    </div>
+
+                    <div className="prose max-w-none mb-6">
+                        <p className="text-gray-700 whitespace-pre-wrap">{question.content}</p>
+                    </div>
+
+                    {question.tags && (
+                        <div className="flex flex-wrap gap-2">
+                            {question.tags.split(',').map((tag, index) => (
+                                <span
+                                    key={index}
+                                    className="px-3 py-1 bg-gray-100 text-gray-600 text-sm rounded-full"
+                                >
+                                    {tag.trim()}
+                                </span>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Question Stats */}
+                    <div className="flex items-center space-x-6 mt-6 pt-4 border-t">
+                        <div className="flex items-center space-x-2">
+                            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                            </svg>
+                            <span className="text-gray-700">{question.votes || 0} votes</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                            </svg>
+                            <span className="text-gray-700">{answers.length} answers</span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Answers Section */}
+                <div className="mb-8">
+                    <h2 className="text-2xl font-bold text-gray-900 mb-4">
+                        {answers.length} {answers.length === 1 ? 'Answer' : 'Answers'}
+                    </h2>
+
+                    {/* Answer Form */}
+                    {user ? (
+                        <form onSubmit={handleSubmitAnswer} className="mb-8">
+                            <div className="bg-white rounded-lg shadow-md p-6">
+                                <h3 className="text-lg font-semibold mb-4">Your Answer</h3>
+                                
+                                {answerError && (
+                                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                                        {answerError}
+                                    </div>
+                                )}
+
+                                <textarea
+                                    value={newAnswer}
+                                    onChange={(e) => setNewAnswer(e.target.value)}
+                                    rows="6"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+                                    placeholder="Write your answer..."
+                                />
+
+
+
+
+                                <button
+                                    type="submit"
+                                    disabled={answerLoading}
+                                    className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-yellow-700 disabled:opacity-50 transition-colors"
+                                >
+                                    {answerLoading ? (
+                                        <>
+                                            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            Posting...
+                                        </>
+                                    ) : (
+                                        'Post Answer'
+                                    )}
+                                </button>
+
+
+
+
+<Link to="/dashbord"> 
+<button className='bg-yellow-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 ml-20'>-> to Dashboard</button>
+
+  </Link>
+
+
+                            </div>
+                        </form>
+                    ) : (
+                        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded mb-8">
+                            Please{' '}
+                            <button
+                                onClick={() => setAnswerError('Please sign in to post an answer.')}
+                                className="text-blue-600 hover:underline font-medium bg-transparent border-none cursor-pointer"
+                            >
+                                sign in
+                            </button>{' '}
+                            to answer this question.
+                        </div>
+                    )}
+
+                    {/* Answers List */}
+                    <div className="space-y-4">
+                        {answers.length === 0 ? (
+                            <div className="text-center py-12 bg-white rounded-lg shadow">
+                                <p className="text-gray-500">No answers yet. Be the first to answer!</p>
+                            </div>
+                        ) : (
+                            answers.map((answer) => (
+                                <AnswerCard
+                                    key={answer.id}
+                                    answer={answer}
+                                    questionUserId={question.user_id}
+                                    currentUser={user}
+                                    onAccept={() => handleAcceptAnswer(answer.id)}
+                                    onDelete={() => handleDeleteAnswer(answer.id)}
+                                />
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default QuestionDetail;
