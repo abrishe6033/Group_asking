@@ -69,7 +69,7 @@ const Signup = () => {
         
         try {
             const { confirmPassword, ...signupData } = formData;
-            const response = await axios.post('/signup', signupData);
+            const response = await axiosBase.post('/signup', signupData);
             
             if (response.data && response.data.success) {
                 // Save token and user data
