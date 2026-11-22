@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import axios from '../axiosConfig'
 import { Link } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
-import axiosBase from '../axiosConfig';
+import { axiosBase } from '../axiosConfig';
 
 const Signup = () => {
     const [formData, setFormData] = useState({
